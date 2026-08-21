@@ -1,0 +1,11 @@
+camera_id,movement_id,gt_count,predicted_count,absolute_error,error_pct
+cam_5,1,1,10,9,900.0
+cam_5,2,5,0,5,100.0
+cam_5,3,13,0,13,100.0
+cam_5,4,10,0,10,100.0
+cam_5,5,25,49,24,96.0
+cam_5,7,1,1,0,0.0
+cam_5,10,2,0,2,100.0
+cam_5,11,38,0,38,100.0
+cam_5,12,1,0,1,100.0
+cam_5,TOTAL,96,60,36.0,37.5

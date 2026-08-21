@@ -1,0 +1,271 @@
+{
+  "video_id": "cam_9",
+  "camera_id": "cam_9",
+  "video_file": "D:\\openhack\\AIC21_Track1_Vehicle_Counting\\Dataset_A\\cam_9.mp4",
+  "video_info": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 10.0,
+    "total_frames": 3000,
+    "duration_sec": 300.0
+  },
+  "processing": {
+    "frames_processed": 600,
+    "frame_skip": 0,
+    "processing_time_seconds": 72.71,
+    "speed_fps": 8.3,
+    "device": "cuda",
+    "model": "YOLOv8n (COCO pretrained)",
+    "tracker": "ByteTrack"
+  },
+  "total_vehicles": 5,
+  "vehicle_classes": {
+    "Car": 5
+  },
+  "movement_counts": {
+    "2": 1,
+    "8": 3,
+    "4": 1
+  },
+  "movement_class_counts": {
+    "2": {
+      "Car": 1
+    },
+    "8": {
+      "Car": 3
+    },
+    "4": {
+      "Car": 1
+    }
+  },
+  "time_window_counts": {
+    "0-60s": 5
+  },
+  "traffic_state": "MEDIUM",
+  "traffic_features": {
+    "total_flow_rate_per_min": 5.0,
+    "direction_imbalance_detected": true,
+    "direction_imbalance_ratio": 3.0
+  },
+  "traffic_state_history": [
+    {
+      "window_start_sec": -60.0,
+      "window_end_sec": 0.0,
+      "total_flow_rate_per_min": 0.0,
+      "overall_state": "LOW",
+      "total_vehicles_in_window": 0,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 1.0,
+        "description": "Insufficient data for imbalance detection"
+      },
+      "per_movement": []
+    },
+    {
+      "window_start_sec": -50.1,
+      "window_end_sec": 9.9,
+      "total_flow_rate_per_min": 1.0,
+      "overall_state": "LOW",
+      "total_vehicles_in_window": 1,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 1.0,
+        "description": "Insufficient data for imbalance detection"
+      },
+      "per_movement": [
+        {
+          "movement_id": 2,
+          "description": "through movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        }
+      ]
+    },
+    {
+      "window_start_sec": -40.1,
+      "window_end_sec": 19.9,
+      "total_flow_rate_per_min": 3.0,
+      "overall_state": "MEDIUM",
+      "total_vehicles_in_window": 3,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 2.0,
+        "description": ""
+      },
+      "per_movement": [
+        {
+          "movement_id": 2,
+          "description": "through movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 8,
+          "description": "through movement",
+          "flow_rate_per_min": 2.0,
+          "state": "MEDIUM",
+          "count_in_window": 2
+        }
+      ]
+    },
+    {
+      "window_start_sec": -30.1,
+      "window_end_sec": 29.9,
+      "total_flow_rate_per_min": 4.0,
+      "overall_state": "MEDIUM",
+      "total_vehicles_in_window": 4,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 2.0,
+        "description": ""
+      },
+      "per_movement": [
+        {
+          "movement_id": 2,
+          "description": "through movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 4,
+          "description": "right-turning movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 8,
+          "description": "through movement",
+          "flow_rate_per_min": 2.0,
+          "state": "MEDIUM",
+          "count_in_window": 2
+        }
+      ]
+    },
+    {
+      "window_start_sec": -20.1,
+      "window_end_sec": 39.9,
+      "total_flow_rate_per_min": 5.0,
+      "overall_state": "MEDIUM",
+      "total_vehicles_in_window": 5,
+      "direction_imbalance": {
+        "detected": true,
+        "dominant_movement": 8,
+        "suppressed_movement": 2,
+        "ratio": 3.0,
+        "description": "Direction imbalance detected: movement 8 (through movement) has 3.0x more flow than movement 2 (through movement)"
+      },
+      "per_movement": [
+        {
+          "movement_id": 2,
+          "description": "through movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 4,
+          "description": "right-turning movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 8,
+          "description": "through movement",
+          "flow_rate_per_min": 3.0,
+          "state": "MEDIUM",
+          "count_in_window": 3
+        }
+      ]
+    },
+    {
+      "window_start_sec": -10.1,
+      "window_end_sec": 49.9,
+      "total_flow_rate_per_min": 5.0,
+      "overall_state": "MEDIUM",
+      "total_vehicles_in_window": 5,
+      "direction_imbalance": {
+        "detected": true,
+        "dominant_movement": 8,
+        "suppressed_movement": 2,
+        "ratio": 3.0,
+        "description": "Direction imbalance detected: movement 8 (through movement) has 3.0x more flow than movement 2 (through movement)"
+      },
+      "per_movement": [
+        {
+          "movement_id": 2,
+          "description": "through movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 4,
+          "description": "right-turning movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 8,
+          "description": "through movement",
+          "flow_rate_per_min": 3.0,
+          "state": "MEDIUM",
+          "count_in_window": 3
+        }
+      ]
+    },
+    {
+      "window_start_sec": -0.1,
+      "window_end_sec": 59.9,
+      "total_flow_rate_per_min": 5.0,
+      "overall_state": "MEDIUM",
+      "total_vehicles_in_window": 5,
+      "direction_imbalance": {
+        "detected": true,
+        "dominant_movement": 8,
+        "suppressed_movement": 2,
+        "ratio": 3.0,
+        "description": "Direction imbalance detected: movement 8 (through movement) has 3.0x more flow than movement 2 (through movement)"
+      },
+      "per_movement": [
+        {
+          "movement_id": 2,
+          "description": "through movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 4,
+          "description": "right-turning movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        },
+        {
+          "movement_id": 8,
+          "description": "through movement",
+          "flow_rate_per_min": 3.0,
+          "state": "MEDIUM",
+          "count_in_window": 3
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "annotated_video": "D:\\openhack\\traffic_ml\\outputs\\videos\\cam_9_annotated.mp4"
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "video_id": "6004ff9e_188613-883402208_medium",
+  "camera_id": "cam_5",
+  "video_file": "D:\\openhack\\traffic_ml\\data\\uploads\\6004ff9e_188613-883402208_medium.mp4",
+  "video_info": {
+    "width": 1280,
+    "height": 720,
+    "fps": 23.976023976023978,
+    "total_frames": 660,
+    "duration_sec": 27.53
+  },
+  "processing": {
+    "frames_processed": 600,
+    "frame_skip": 0,
+    "processing_time_seconds": 84.81,
+    "speed_fps": 7.1,
+    "device": "cuda",
+    "model": "YOLOv8n (COCO pretrained)",
+    "tracker": "ByteTrack"
+  },
+  "total_vehicles": 26,
+  "vehicle_classes": {
+    "Car": 26
+  },
+  "movement_counts": {
+    "6": 26
+  },
+  "movement_class_counts": {
+    "6": {
+      "Car": 26
+    }
+  },
+  "time_window_counts": {
+    "0-60s": 26
+  },
+  "traffic_state": "CRITICAL",
+  "traffic_features": {
+    "total_flow_rate_per_min": 18.0,
+    "direction_imbalance_detected": false,
+    "direction_imbalance_ratio": 1.0
+  },
+  "traffic_state_history": [
+    {
+      "window_start_sec": -60.0,
+      "window_end_sec": 0.0,
+      "total_flow_rate_per_min": 0.0,
+      "overall_state": "LOW",
+      "total_vehicles_in_window": 0,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 1.0,
+        "description": "Insufficient data for imbalance detection"
+      },
+      "per_movement": []
+    },
+    {
+      "window_start_sec": -50.1,
+      "window_end_sec": 9.9,
+      "total_flow_rate_per_min": 5.0,
+      "overall_state": "MEDIUM",
+      "total_vehicles_in_window": 5,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 1.0,
+        "description": "Insufficient data for imbalance detection"
+      },
+      "per_movement": [
+        {
+          "movement_id": 6,
+          "description": "left-turning movement",
+          "flow_rate_per_min": 5.0,
+          "state": "MEDIUM",
+          "count_in_window": 5
+        }
+      ]
+    },
+    {
+      "window_start_sec": -40.1,
+      "window_end_sec": 19.9,
+      "total_flow_rate_per_min": 18.0,
+      "overall_state": "CRITICAL",
+      "total_vehicles_in_window": 18,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 1.0,
+        "description": "Insufficient data for imbalance detection"
+      },
+      "per_movement": [
+        {
+          "movement_id": 6,
+          "description": "left-turning movement",
+          "flow_rate_per_min": 18.0,
+          "state": "CRITICAL",
+          "count_in_window": 18
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "annotated_video": "D:\\openhack\\traffic_ml\\outputs\\videos\\6004ff9e_annotated.mp4"
+  }
+}

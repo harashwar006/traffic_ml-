@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Uploaded videos
+traffic_ml/data/uploads/
+data/uploads/
+
+# Generated/output videos
+traffic_ml/outputs/videos/
+outputs/videos/
+
+# Generated reports
+traffic_ml/reports/*.json
+traffic_ml/reports/*.md
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML caches
+.cache/
+*.cache
+
+# Optional: don't commit model weights if they are downloaded during setup
+# *.pt
+# *.onnx

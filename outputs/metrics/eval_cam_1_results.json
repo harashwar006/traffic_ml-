@@ -1,0 +1,23 @@
+{
+  "video": "cam_1.mp4",
+  "camera_id": "cam_1",
+  "job_id": "eval_cam_1",
+  "total_vehicles": 0,
+  "vehicle_classes": {},
+  "movement_counts": {},
+  "traffic_state": "LOW",
+  "traffic_features": {
+    "total_flow_rate_per_min": 0.0,
+    "direction_imbalance_detected": false,
+    "direction_imbalance_ratio": 1.0
+  },
+  "processing": {
+    "frames_processed": 50,
+    "processing_time_sec": 8.26,
+    "fps": 6.1
+  },
+  "outputs": {
+    "annotated_video": "D:\\openhack\\traffic_ml\\outputs\\videos\\eval_cam_1_annotated.mp4",
+    "json_results": "D:\\openhack\\traffic_ml\\outputs\\metrics\\eval_cam_1_results.json"
+  }
+}

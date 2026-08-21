@@ -1,0 +1,85 @@
+{
+  "video_id": "6125c624_cam_1_test",
+  "camera_id": "cam_1",
+  "video_file": "D:\\openhack\\traffic_ml\\data\\uploads\\6125c624_cam_1_test.mp4",
+  "video_info": {
+    "width": 1280,
+    "height": 960,
+    "fps": 10.0,
+    "total_frames": 3000,
+    "duration_sec": 300.0
+  },
+  "processing": {
+    "frames_processed": 100,
+    "frame_skip": 0,
+    "processing_time_seconds": 5.05,
+    "speed_fps": 19.8,
+    "device": "cuda",
+    "model": "YOLOv8n (COCO pretrained)",
+    "tracker": "ByteTrack"
+  },
+  "total_vehicles": 1,
+  "vehicle_classes": {
+    "Car": 1
+  },
+  "movement_counts": {
+    "1": 1
+  },
+  "movement_class_counts": {
+    "1": {
+      "Car": 1
+    }
+  },
+  "time_window_counts": {
+    "0-60s": 1
+  },
+  "traffic_state": "LOW",
+  "traffic_features": {
+    "total_flow_rate_per_min": 1.0,
+    "direction_imbalance_detected": false,
+    "direction_imbalance_ratio": 1.0
+  },
+  "traffic_state_history": [
+    {
+      "window_start_sec": -60.0,
+      "window_end_sec": 0.0,
+      "total_flow_rate_per_min": 0.0,
+      "overall_state": "LOW",
+      "total_vehicles_in_window": 0,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 1.0,
+        "description": "Insufficient data for imbalance detection"
+      },
+      "per_movement": []
+    },
+    {
+      "window_start_sec": -50.1,
+      "window_end_sec": 9.9,
+      "total_flow_rate_per_min": 1.0,
+      "overall_state": "LOW",
+      "total_vehicles_in_window": 1,
+      "direction_imbalance": {
+        "detected": false,
+        "dominant_movement": null,
+        "suppressed_movement": null,
+        "ratio": 1.0,
+        "description": "Insufficient data for imbalance detection"
+      },
+      "per_movement": [
+        {
+          "movement_id": 1,
+          "description": "highway through movement",
+          "flow_rate_per_min": 1.0,
+          "state": "LOW",
+          "count_in_window": 1
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "annotated_video": "D:\\openhack\\traffic_ml\\outputs\\videos\\6125c624_annotated.mp4"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "video": "cam_5.mp4",
+  "camera_id": "cam_5",
+  "total_vehicles": 137,
+  "vehicle_classes": {
+    "Car": 135,
+    "Truck": 2
+  },
+  "movement_counts": {
+    "7": 5,
+    "6": 2,
+    "9": 41,
+    "4": 25,
+    "8": 4,
+    "10": 1
+  },
+  "traffic_state": "CRITICAL",
+  "traffic_features": {
+    "total_flow_rate_per_min": 78.0,
+    "direction_imbalance_detected": true,
+    "direction_imbalance_ratio": 41.0
+  },
+  "processing": {
+    "frames_processed": 600,
+    "processing_time_sec": 26.6,
+    "fps": 22.6
+  },
+  "outputs": {
+    "annotated_video": "D:/openhack/traffic_ml/outputs/videos/cam5_eval_annotated.mp4",
+    "json_results": "D:/openhack/traffic_ml/outputs/metrics/cam5_eval_results.json"
+  }
+}

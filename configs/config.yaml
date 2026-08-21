@@ -1,0 +1,155 @@
+# =============================================================================
+# configs/config.yaml
+# TrafficTwin — Master Configuration
+# AIC21 Track 1 — Multi-Class Multi-Movement Vehicle Counting
+# =============================================================================
+
+project:
+  name: TrafficTwin
+  version: "1.0.0"
+  dataset: "AIC21 Track 1"
+
+paths:
+  dataset_root: "D:/openhack/AIC21_Track1_Vehicle_Counting"
+  video_dir: "D:/openhack/AIC21_Track1_Vehicle_Counting/Dataset_A"
+  roi_dir: "D:/openhack/AIC21_Track1_Vehicle_Counting/ROIs"
+  movement_dir: "D:/openhack/AIC21_Track1_Vehicle_Counting/movement_description"
+  gt_dir: "D:/openhack/AIC21_Track1_Vehicle_Counting/counting_gt_sample"
+  project_root: "D:/openhack/traffic_ml"
+  models_dir: "D:/openhack/traffic_ml/models"
+  outputs_dir: "D:/openhack/traffic_ml/outputs"
+  reports_dir: "D:/openhack/traffic_ml/reports"
+
+hardware:
+  device: "cuda"          # "cuda" or "cpu" — auto-detected at runtime
+  gpu_vram_gb: 4.0
+  num_workers: 4          # dataloader workers
+
+# =============================================================================
+# DETECTION
+# =============================================================================
+detection:
+  model: "yolov8n"           # Chosen: lightweight, fits 4GB VRAM, fast inference
+  model_path: null           # null = auto-download; or set path to existing .pt
+  pretrained_weights: "yolov8n.pt"
+  confidence_threshold: 0.35
+  iou_threshold: 0.45
+  input_size: 640           # inference image size (pixels)
+  # AIC21 classes to detect (mapped to COCO classes)
+  # Class 1 = Car → COCO IDs: 2 (car), 5 (bus), 7 (truck) → mapped to Car
+  # Class 2 = Truck → COCO IDs: 7 (truck) → mapped to Truck
+  # Motorcycles (COCO 3) are detected but NOT counted
+  target_coco_classes: [2, 5, 7]  # car, bus, truck
+  car_coco_ids: [2, 5]            # treated as Car for counting
+  truck_coco_ids: [7]             # treated as Truck for counting
+  motorcycle_coco_ids: [3]        # detected but excluded from counting
+
+# =============================================================================
+# TRACKING
+# =============================================================================
+tracking:
+  tracker: "bytetrack"      # bytetrack via ultralytics built-in
+  track_high_thresh: 0.35
+  track_low_thresh: 0.10
+  new_track_thresh: 0.40
+  track_buffer: 30          # frames to keep lost track alive
+  match_thresh: 0.80        # IoU match threshold
+
+# =============================================================================
+# ROI FILTERING & SPATIAL VALIDATION
+# =============================================================================
+roi_filtering:
+  enabled: true
+  reference_point: "bottom_center"      # "bottom_center" (road contact) or "center"
+  roi_border_margin_pixels: 0.0         # 0.0 = boundary geometric containment
+  show_outside_roi_detections: false    # Mode B: false = Traffic Analysis Mode; true = Debug Mode
+  min_track_frames_confirm: 1           # Immediate confirmation upon ROI entry
+
+# =============================================================================
+# MOVEMENT ASSIGNMENT
+# =============================================================================
+movement:
+  method: "trajectory_roi_exit"
+  # A vehicle is assigned to a movement when its trajectory crosses the exit approach
+  min_track_length: 5       # minimum frames before movement can be assigned
+  exit_boundary_margin: 20  # pixels — distance from ROI boundary to trigger exit
+
+# =============================================================================
+# COUNTING
+# =============================================================================
+counting:
+  # Count vehicle ONCE when reference point enters the valid ROI (or initial appearance)
+  count_trigger: "roi_entry"  # "roi_entry" = count on ROI entry
+  min_track_length: 1         # Count immediately on valid entry
+  min_confidence: 0.35
+  prevent_recount: true       # track IDs are never counted twice
+
+# =============================================================================
+# TRAFFIC INTELLIGENCE LAYER
+# =============================================================================
+intelligence:
+  # Selected mechanism: Traffic-State/Risk Estimation
+  # Uses movement counts + temporal flow rates to classify traffic state
+  mechanism: "traffic_state_estimation"
+  time_window_seconds: 60     # rolling window for flow rate calculation
+  thresholds:
+    # Derived from dataset flow rates after processing. Initially set to reasonable defaults.
+    # These MUST be updated after processing real data.
+    low_flow_rate: 2.0        # vehicles/minute per movement
+    medium_flow_rate: 8.0
+    high_flow_rate: 15.0
+    # Traffic states: LOW, MEDIUM, HIGH, CRITICAL
+    critical_flow_rate: 25.0
+  direction_imbalance:
+    enabled: true
+    imbalance_threshold: 3.0  # ratio: if one direction > N * another direction
+
+# =============================================================================
+# INFERENCE PIPELINE
+# =============================================================================
+inference:
+  frame_skip: 0              # 0 = process every frame; N = skip N frames between processed
+  max_frames: null           # null = process full video; N = stop after N frames
+  save_annotated_video: true
+  save_json_results: true
+  annotated_video_fps: 10
+  video_output_dir: "D:/openhack/traffic_ml/outputs/videos"
+  metrics_output_dir: "D:/openhack/traffic_ml/outputs/metrics"
+
+# =============================================================================
+# EVALUATION
+# =============================================================================
+evaluation:
+  counting_metrics: ["MAE", "RMSE", "accuracy"]
+  gt_csv: "D:/openhack/AIC21_Track1_Vehicle_Counting/counting_gt_sample/counting_example_cam_5_1min.csv"
+  eval_camera: "cam_5"
+  eval_duration_frames: 600   # first 600 frames only (1 minute at 10fps)
+
+# =============================================================================
+# VISUALIZATION
+# =============================================================================
+visualization:
+  show_bbox: true
+  show_track_id: true
+  show_class: true
+  show_movement: true
+  show_traffic_state: true
+  show_roi: true
+  bbox_thickness: 2
+  font_scale: 0.6
+  colors:
+    car: [0, 255, 0]          # green
+    truck: [0, 165, 255]      # orange
+    unknown: [200, 200, 200]  # grey
+    roi: [255, 255, 0]        # yellow
+    traffic_LOW: [0, 255, 0]
+    traffic_MEDIUM: [0, 165, 255]
+    traffic_HIGH: [0, 0, 255]
+    traffic_CRITICAL: [128, 0, 128]
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+logging:
+  level: "INFO"
+  log_dir: "D:/openhack/traffic_ml/reports"
