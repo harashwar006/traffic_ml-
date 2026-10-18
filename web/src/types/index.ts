@@ -25,7 +25,13 @@ export interface TrafficMetrics {
   direction_imbalance_detected: boolean;
   direction_imbalance_ratio: number;
   dominant_movement?: number;
+  average_speed?: number;
   by_movement: MovementCount[];
+  current_roi_count?: number;
+  initial_occupancy?: number;
+  cumulative_entries?: number;
+  cumulative_exits?: number;
+  invariant_verified?: boolean;
 }
 
 export interface TrafficPrediction {
@@ -101,26 +107,124 @@ export interface CameraInfo {
   has_gt: boolean;
 }
 
+export interface RoadAnalytics {
+  road_id: string;
+  name: string;
+  vehicles?: number;
+  cumulative_vehicles?: number;
+  cumulative_total?: number;
+  current_active?: number;
+  current_roi_count?: number;
+  active_track_ids?: number[];
+  current_moving?: number;
+  current_stationary?: number;
+  current_rest?: number;
+  cumulative_entries?: number;
+  cumulative_exits?: number;
+  completed_trips?: number;
+  valid_trips?: number;
+  average_speed?: number | null;
+  speed_display?: string;
+  length_meters?: number;
+  cars: number;
+  trucks: number;
+  buses?: number;
+  motorcycles?: number;
+  bicycles?: number;
+  flow_volume?: number;
+  queue?: number;
+  traffic_state?: TrafficState;
+}
+
+export interface PerformanceMetrics {
+  gpu_name: string;
+  device: string;
+  precision: string;
+  vram_allocated_mb: number;
+  vram_reserved_mb: number;
+  vram_total_mb: number;
+  cpu_percent: number;
+  ram_used_gb: number;
+  ram_total_gb: number;
+  decode_ms: number;
+  preprocess_ms?: number;
+  inference_ms: number;
+  postprocess_ms?: number;
+  tracking_ms: number;
+  analytics_ms: number;
+  render_ms: number;
+  write_ms: number;
+  total_latency_ms: number;
+  processed_fps: number;
+  source_fps: number;
+  frames_processed: number;
+  frames_skipped: number;
+  inference_imgsz: number;
+  flow_window_seconds?: number;
+}
+
+
 export interface LiveAnalysisState {
   job_id: string;
   frame_index: number;
   total_frames: number;
   video_time_seconds: number;
+  timestamp_sec?: number;
+  // Distinct counts: current visible vs cumulative unique
+  current_active?: number;
+  current_roi_count?: number;
+  initial_occupancy?: number;
+  cumulative_entries?: number;
+  cumulative_exits?: number;
+  invariant_verified?: boolean;
+  current_moving?: number;
+  current_stationary?: number;
+  active_vehicles?: number;
+  moving_vehicles?: number;
+  stationary_vehicles?: number;
   vehicles_counted: number;
   vehicle_classes: {
     Car?: number;
     Truck?: number;
+    Bus?: number;
+    Motorcycle?: number;
+    Bicycle?: number;
   };
+  current_classes?: Record<string, number>;
+  class_counts?: Record<string, number>;
   movement_counts: Record<string, number>;
   traffic_state: TrafficState;
   arrival_rate: number;
+  flow_rate_per_min?: number;
   queue: number;
+  average_speed?: number | null;
+  completed_trips?: number;
+  valid_trips?: number;
+  speed_display?: string;
   processing_fps: number;
   direction_imbalance?: {
     detected: boolean;
     ratio: number;
     dominant_movement?: number;
   };
+  // Multi-road analytics
+  roads?: RoadAnalytics[];
+  total_road_summary?: RoadAnalytics;
+  global?: {
+    vehicles: number;
+    current_active?: number;
+    current_moving?: number;
+    current_stationary?: number;
+    flow_volume: number;
+    traffic_state: TrafficState;
+    queue?: number;
+    average_speed?: number;
+  };
+  // Real-time GPU & pipeline telemetry
+  perf?: PerformanceMetrics;
+  // Output video availability
+  output_ready?: boolean;
+  output_url?: string;
 }
 
 export interface CameraOverviewItem {
@@ -158,4 +262,22 @@ export interface NetworkOverview {
   network_summary: NetworkSummary;
   cameras: CameraOverviewItem[];
 }
+
+export interface VideoSession {
+  videoId: string;
+  sessionId?: string;
+  file?: File | null;
+  videoName?: string;
+  videoStatus: AnalysisStatus;
+  processingProgress: number;
+  roiPolygons: any[];
+  activeTrackIds?: number[];
+  currentROICount?: number;
+  cumulativeEntries?: number;
+  cumulativeExits?: number;
+  roadAnalytics?: RoadAnalytics[];
+  averageSpeed?: number | null;
+  error?: string | null;
+}
+
 

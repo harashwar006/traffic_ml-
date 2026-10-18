@@ -6,6 +6,9 @@ Processes all 5 camera video feeds concurrently using shared GPU YOLOv8n Tensor 
 while maintaining strictly independent ByteTrack, ROI, Movement, and Metric states per camera.
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import json
 import logging
 import subprocess
@@ -66,7 +69,8 @@ class MultiCameraPipeline:
 
         # Load Annotations & ROIs
         data_root = self.project_root.parent / "AIC21_Track1_Vehicle_Counting"
-        self.all_rois = load_all_rois(data_root / "cam_roi")
+        roi_dir = data_root / "ROIs" if (data_root / "ROIs").exists() else data_root / "cam_roi"
+        self.all_rois = load_all_rois(roi_dir)
         self.all_movements = load_all_movements(data_root / "movement_description")
 
         log.info(

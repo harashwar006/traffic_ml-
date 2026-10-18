@@ -292,18 +292,7 @@ class MovementAssigner:
             return self.movement_ids_sorted[turn_offset]
         return self.movement_ids_sorted[-1]
 
-    def _find_nearest_segment(self, x: float, y: float) -> int:
-        """Find the index of the ROI boundary segment closest to (x, y)."""
-        pt = Point(x, y)
-        min_dist = float("inf")
-        best_idx = 0
-        for i, (p1, p2) in enumerate(self.boundary_segments):
-            seg = LineString([p1, p2])
-            dist = seg.distance(pt)
-            if dist < min_dist:
-                min_dist = dist
-                best_idx = i
-        return best_idx
+
 
     def process_frame(
         self,

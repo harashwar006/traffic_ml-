@@ -10,20 +10,24 @@ project:
   dataset: "AIC21 Track 1"
 
 paths:
-  dataset_root: "D:/openhack/AIC21_Track1_Vehicle_Counting"
-  video_dir: "D:/openhack/AIC21_Track1_Vehicle_Counting/Dataset_A"
-  roi_dir: "D:/openhack/AIC21_Track1_Vehicle_Counting/ROIs"
-  movement_dir: "D:/openhack/AIC21_Track1_Vehicle_Counting/movement_description"
-  gt_dir: "D:/openhack/AIC21_Track1_Vehicle_Counting/counting_gt_sample"
-  project_root: "D:/openhack/traffic_ml"
-  models_dir: "D:/openhack/traffic_ml/models"
-  outputs_dir: "D:/openhack/traffic_ml/outputs"
-  reports_dir: "D:/openhack/traffic_ml/reports"
+  dataset_root: "D:/intellathon26/AIC21_Track1_Vehicle_Counting"
+  video_dir: "D:/intellathon26/AIC21_Track1_Vehicle_Counting/Dataset_A"
+  roi_dir: "D:/intellathon26/AIC21_Track1_Vehicle_Counting/ROIs"
+  movement_dir: "D:/intellathon26/AIC21_Track1_Vehicle_Counting/movement_description"
+  gt_dir: "D:/intellathon26/AIC21_Track1_Vehicle_Counting/counting_gt_sample"
+  project_root: "D:/intellathon26/traffic_ml"
+  models_dir: "D:/intellathon26/traffic_ml/models"
+  outputs_dir: "D:/intellathon26/traffic_ml/outputs"
+  reports_dir: "D:/intellathon26/traffic_ml/reports"
 
 hardware:
   device: "cuda"          # "cuda" or "cpu" — auto-detected at runtime
   gpu_vram_gb: 4.0
+  precision: "fp16"       # Half precision (FP16) on RTX 3050 Tensor Cores
   num_workers: 4          # dataloader workers
+
+video:
+  source_fps: 10.0        # Override incorrect video header FPS
 
 # =============================================================================
 # DETECTION
@@ -32,27 +36,25 @@ detection:
   model: "yolov8n"           # Chosen: lightweight, fits 4GB VRAM, fast inference
   model_path: null           # null = auto-download; or set path to existing .pt
   pretrained_weights: "yolov8n.pt"
-  confidence_threshold: 0.35
-  iou_threshold: 0.45
-  input_size: 640           # inference image size (pixels)
-  # AIC21 classes to detect (mapped to COCO classes)
-  # Class 1 = Car → COCO IDs: 2 (car), 5 (bus), 7 (truck) → mapped to Car
-  # Class 2 = Truck → COCO IDs: 7 (truck) → mapped to Truck
-  # Motorcycles (COCO 3) are detected but NOT counted
-  target_coco_classes: [2, 5, 7]  # car, bus, truck
+  confidence_threshold: 0.25 # Optimized for aerial roofs and ground vehicles
+  iou_threshold: 0.50        # Dense queue separation
+  input_size: 960            # High-resolution inference (640, 960, 1280 benchmarked)
+  drone_mode: false          # Set to true for automated aerial drone preset
+  target_coco_classes: [1, 2, 3, 5, 7]  # bicycle, car, motorcycle, bus, truck
   car_coco_ids: [2, 5]            # treated as Car for counting
   truck_coco_ids: [7]             # treated as Truck for counting
-  motorcycle_coco_ids: [3]        # detected but excluded from counting
+  motorcycle_coco_ids: [3]        # motorcycle
+  bicycle_coco_ids: [1]           # bicycle
 
 # =============================================================================
 # TRACKING
 # =============================================================================
 tracking:
   tracker: "bytetrack"      # bytetrack via ultralytics built-in
-  track_high_thresh: 0.35
-  track_low_thresh: 0.10
-  new_track_thresh: 0.40
-  track_buffer: 30          # frames to keep lost track alive
+  track_high_thresh: 0.25   # Lower threshold to retain top-view tracks
+  track_low_thresh: 0.10    # Low threshold for occluded roof tracks
+  new_track_thresh: 0.30
+  track_buffer: 40          # frames to keep lost track alive
   match_thresh: 0.80        # IoU match threshold
 
 # =============================================================================
@@ -61,9 +63,32 @@ tracking:
 roi_filtering:
   enabled: true
   reference_point: "bottom_center"      # "bottom_center" (road contact) or "center"
-  roi_border_margin_pixels: 0.0         # 0.0 = boundary geometric containment
-  show_outside_roi_detections: false    # Mode B: false = Traffic Analysis Mode; true = Debug Mode
-  min_track_frames_confirm: 1           # Immediate confirmation upon ROI entry
+  boundary_tolerance_pixels: 8.0        # Margin in pixels for hysteresis band
+  roi_border_margin_pixels: 8.0         # Boundary tolerance
+  entry_confirm_frames: 2               # Consecutive frames inside to confirm entry
+  exit_confirm_frames: 3                # Consecutive frames outside to confirm exit
+  lost_grace_frames: 12                 # Grace period before track expires
+  show_outside_roi_detections: true     # Render outside vehicles with muted styling
+
+# =============================================================================
+# ROAD ASSIGNMENT HYSTERESIS
+# =============================================================================
+road_assignment:
+  switch_confirm_frames: 10
+  entry_confirm_frames: 5
+  lost_grace_frames: 15
+  boundary_margin_pixels: 15.0
+
+# =============================================================================
+# MOVEMENT STATE CLASSIFICATION (MOVING vs REST)
+# =============================================================================
+movement_state:
+  window_seconds: 0.75
+  start_moving_threshold_px_per_sec: 12.0
+  stop_moving_threshold_px_per_sec: 6.0
+  moving_confirm_frames: 3
+  rest_confirm_frames: 5
+  min_history_seconds: 0.5
 
 # =============================================================================
 # MOVEMENT ASSIGNMENT
@@ -113,15 +138,15 @@ inference:
   save_annotated_video: true
   save_json_results: true
   annotated_video_fps: 10
-  video_output_dir: "D:/openhack/traffic_ml/outputs/videos"
-  metrics_output_dir: "D:/openhack/traffic_ml/outputs/metrics"
+  video_output_dir: "D:/intellathon26/traffic_ml/outputs/videos"
+  metrics_output_dir: "D:/intellathon26/traffic_ml/outputs/metrics"
 
 # =============================================================================
 # EVALUATION
 # =============================================================================
 evaluation:
   counting_metrics: ["MAE", "RMSE", "accuracy"]
-  gt_csv: "D:/openhack/AIC21_Track1_Vehicle_Counting/counting_gt_sample/counting_example_cam_5_1min.csv"
+  gt_csv: "D:/intellathon26/AIC21_Track1_Vehicle_Counting/counting_gt_sample/counting_example_cam_5_1min.csv"
   eval_camera: "cam_5"
   eval_duration_frames: 600   # first 600 frames only (1 minute at 10fps)
 
@@ -152,4 +177,4 @@ visualization:
 # =============================================================================
 logging:
   level: "INFO"
-  log_dir: "D:/openhack/traffic_ml/reports"
+  log_dir: "D:/intellathon26/traffic_ml/reports"

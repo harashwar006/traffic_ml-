@@ -54,6 +54,11 @@ class TrafficMetrics(BaseModel):
     direction_imbalance_ratio: float
     dominant_movement: Optional[int] = None
     by_movement: List[MovementCount] = []
+    current_roi_count: Optional[int] = None
+    initial_occupancy: Optional[int] = None
+    cumulative_entries: Optional[int] = None
+    cumulative_exits: Optional[int] = None
+    invariant_verified: Optional[bool] = None
 
 
 class TrafficPrediction(BaseModel):
@@ -152,6 +157,10 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     gpu_available: bool
+    device: Optional[str] = "cpu"
+    gpu_name: Optional[str] = None
+    cuda_version: Optional[str] = None
+    precision: Optional[str] = "FP32"
     model_loaded: bool
     active_jobs: int
 

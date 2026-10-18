@@ -32,7 +32,7 @@ class VideoInfo:
     camera_id: str          # e.g. "cam_5"
 
 
-def get_video_info(video_path: Path) -> Optional[VideoInfo]:
+def get_video_info(video_path: Path, source_fps: Optional[float] = None) -> Optional[VideoInfo]:
     """
     Open video and read metadata without loading frames.
     Returns VideoInfo or None if the file cannot be opened.
@@ -42,7 +42,10 @@ def get_video_info(video_path: Path) -> Optional[VideoInfo]:
         log.error(f"Cannot open video: {video_path}")
         return None
     try:
-        fps = cap.get(cv2.CAP_PROP_FPS)
+        if source_fps and source_fps > 0:
+            fps = source_fps
+        else:
+            fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -77,6 +80,7 @@ def iter_frames(
     max_frames: Optional[int] = None,
     start_frame: int = 0,
     resize_width: Optional[int] = None,
+    source_fps: Optional[float] = None,
 ) -> Generator[Tuple[int, float, np.ndarray], None, None]:
     """
     Iterate over frames of a video.
@@ -101,9 +105,12 @@ def iter_frames(
         log.error(f"Cannot open video: {video_path}")
         return
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0:
-        fps = 10.0  # fallback
+    if source_fps and source_fps > 0:
+        fps = source_fps
+    else:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            fps = 10.0  # fallback
 
     # Seek to start frame if needed
     if start_frame > 0:

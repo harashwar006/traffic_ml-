@@ -133,11 +133,19 @@ def load_roi(roi_path: Path) -> Optional[ROIPolygon]:
 def load_all_rois(roi_dir: Path) -> Dict[str, ROIPolygon]:
     """Load all ROI files in directory. Returns {camera_id: ROIPolygon}."""
     rois = {}
+    if not roi_dir.exists() or not roi_dir.is_dir():
+        log.error(f"ROI directory not found or invalid: {roi_dir}")
+        return rois
+
     for f in sorted(roi_dir.glob("*.txt")):
         roi = load_roi(f)
         if roi:
             rois[roi.camera_id] = roi
-    log.info(f"Loaded ROIs for {len(rois)} cameras.")
+            
+    if len(rois) == 0:
+        log.warning(f"No ROIs found in {roi_dir}")
+    else:
+        log.info(f"Loaded ROIs for {len(rois)} cameras: {list(rois.keys())}")
     return rois
 
 
@@ -190,11 +198,19 @@ def load_movement_description(mov_path: Path) -> Optional[CameraAnnotation]:
 def load_all_movements(mov_dir: Path) -> Dict[str, CameraAnnotation]:
     """Load all movement description files. Returns {camera_id: CameraAnnotation}."""
     annotations = {}
+    if not mov_dir.exists() or not mov_dir.is_dir():
+        log.error(f"Movement directory not found or invalid: {mov_dir}")
+        return annotations
+
     for f in sorted(mov_dir.glob("*.txt")):
         ann = load_movement_description(f)
         if ann:
             annotations[ann.camera_id] = ann
-    log.info(f"Loaded movement descriptions for {len(annotations)} cameras.")
+            
+    if len(annotations) == 0:
+        log.warning(f"No movement descriptions found in {mov_dir}")
+    else:
+        log.info(f"Loaded movement descriptions for {len(annotations)} cameras: {list(annotations.keys())}")
     return annotations
 
 

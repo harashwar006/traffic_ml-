@@ -54,10 +54,11 @@ export const MetricCard: React.FC<MetricCardProps> = ({
         <span
           className="font-mono"
           style={{
-            fontSize: '28px',
+            fontSize: typeof value === 'string' && value.length > 12 ? (value.length > 18 ? '15px' : '18px') : '28px',
             fontWeight: 800,
             color: 'var(--text-primary)',
             letterSpacing: '-0.02em',
+            lineHeight: 1.2,
           }}
         >
           {value}

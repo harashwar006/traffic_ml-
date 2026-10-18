@@ -9,6 +9,8 @@ import { LiveAnalysis } from './pages/LiveAnalysis';
 import { Simulator } from './pages/Simulator';
 import { History } from './pages/History';
 
+import { ErrorBoundary } from './components/common/ErrorBoundary';
+
 export function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [state, setState] = useState<CurrentState>({
@@ -54,12 +56,14 @@ export function App() {
         />
 
         <main className="content-wrapper">
-          <Routes>
-            <Route path="/" element={<Overview state={state} onRunSimulation={fetchTrafficState} />} />
-            <Route path="/live" element={<LiveAnalysis state={state} onRefresh={fetchTrafficState} />} />
-            <Route path="/simulate" element={<Simulator state={state} onRefresh={fetchTrafficState} />} />
-            <Route path="/history" element={<History state={state} />} />
-          </Routes>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Overview state={state} onRunSimulation={fetchTrafficState} />} />
+              <Route path="/live" element={<LiveAnalysis state={state} onRefresh={fetchTrafficState} />} />
+              <Route path="/simulate" element={<Simulator state={state} onRefresh={fetchTrafficState} />} />
+              <Route path="/history" element={<History state={state} />} />
+            </Routes>
+          </ErrorBoundary>
         </main>
 
         <Footer />

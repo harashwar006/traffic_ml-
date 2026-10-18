@@ -9,7 +9,11 @@ class TrafficApiService {
     this.baseUrl = baseUrl;
   }
 
-  async checkHealth(): Promise<{ status: string; gpu_available: boolean }> {
+  get apiBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  async checkHealth(): Promise<{ status: string; gpu_available: boolean; device?: string; gpu_name?: string; precision?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/health`);
       if (!res.ok) throw new Error('Health check failed');
@@ -41,16 +45,35 @@ class TrafficApiService {
     }
   }
 
-  async startInference(cameraIdOrJobId: string = 'cam_5', maxFrames: number = 600): Promise<{ job_id: string; status: string }> {
+  async startInference(cameraIdOrJobId: string = 'cam_5', maxFrames: number = 600, roadsConfig?: any[]): Promise<{ job_id: string; status: string }> {
     const formData = new FormData();
     formData.append('job_id', cameraIdOrJobId);
     formData.append('max_frames', maxFrames.toString());
+    if (roadsConfig && roadsConfig.length > 0) {
+      formData.append('roads_json', JSON.stringify(roadsConfig));
+    }
 
     const res = await fetch(`${this.baseUrl}/api/inference/start`, {
       method: 'POST',
       body: formData,
     });
     if (!res.ok) throw new Error('Failed to start inference');
+    return await res.json();
+  }
+
+  async stopInference(jobId: string): Promise<{ job_id: string; status: string; message: string }> {
+    const res = await fetch(`${this.baseUrl}/api/inference/${jobId}/stop`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error('Failed to stop inference');
+    return await res.json();
+  }
+
+  async deleteSession(jobId: string): Promise<{ job_id: string; status: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sessions/${jobId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to delete session');
     return await res.json();
   }
 

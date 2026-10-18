@@ -37,6 +37,33 @@ Thumbs.db
 .cache/
 *.cache
 
-# Optional: don't commit model weights if they are downloaded during setup
+# Node / Web Frontend
+node_modules/
+web/node_modules/
+dist/
+web/dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+
+# Debug & Runtime artifacts
+debug/
+outputs/metrics/*
+!outputs/metrics/.gitkeep
+jobs/
+
+# Heavy video & media files
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.flv
+*.wmv
+*.webm
+*.zip
+*.tar
+*.gz
+
+# Model weights (uncomment if not committing weights)
 # *.pt
 # *.onnx

@@ -18,6 +18,9 @@ Usage:
     python main.py --video ... --camera cam_5 --frame-skip 1 --no-video
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import argparse
 import json
 import logging

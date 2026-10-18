@@ -5,21 +5,21 @@
 # Listed here for documentation and reproducibility.
 # Install with: pip install -r requirements.txt
 
-# Core ML / Computer Vision
-torch>=2.5.1             # PyTorch with CUDA 12.1
+# Core ML / Computer Vision (install CUDA build with: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126)
+torch>=2.5.1
 torchvision>=0.20.1
 ultralytics>=8.4.21      # YOLOv8 + ByteTrack (built-in)
-opencv-python>=4.13.0    # Video I/O, polygon ops, visualization
+opencv-python>=4.10.0    # Video I/O, polygon ops, visualization
 
 # Data / Analytics
-numpy>=2.2.6
-pandas>=2.3.3
-scipy>=1.15.3
-scikit-learn>=1.7.2
-shapely>=2.1.2            # ROI polygon geometry (point-in-polygon, boundary checks)
+numpy>=2.0.0
+pandas>=2.2.0
+scipy>=1.15.0
+scikit-learn>=1.6.0
+shapely>=2.0.0            # ROI polygon geometry (point-in-polygon, boundary checks)
 
 # Tracking
-lap>=0.5.13              # Linear assignment for ByteTrack / SORT
+lapx>=0.5.11             # Linear assignment for ByteTrack (Windows compatible prebuilt wheel)
 
 # Configuration
 PyYAML>=6.0.3

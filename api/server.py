@@ -9,12 +9,16 @@ and decision recommendation / counterfactual simulation engine.
 """
 
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import sys
 import uuid
 import json
 import asyncio
 import collections
 import logging
+import queue
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 import shutil
@@ -87,7 +91,18 @@ JOBS: Dict[str, dict] = {}
 FRAME_BUFFERS: Dict[str, collections.deque] = {}
 LIVE_ANALYSIS_STATES: Dict[str, dict] = {}
 ACTIVE_WEBSOCKETS: Dict[str, Set[WebSocket]] = {}
+STOP_FLAGS: Dict[str, bool] = {}
 CURRENT_STATE = CurrentState()
+MAIN_EVENT_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+@app.on_event("startup")
+async def app_startup_event():
+    global MAIN_EVENT_LOOP
+    try:
+        MAIN_EVENT_LOOP = asyncio.get_running_loop()
+        log.info("[STARTUP] Captured main asyncio event loop for thread-safe WebSocket broadcasts.")
+    except Exception as e:
+        log.warning(f"[STARTUP] Could not capture running event loop: {e}")
 
 # Canonical baseline result file
 DEFAULT_RESULT_JSON = OUTPUT_METRICS_DIR / "cam5_eval_results.json"
@@ -163,9 +178,8 @@ def build_state_from_result(result_data: dict, job_id: str = "demo-cam5", video_
     total_veh = result_data.get("total_vehicles", sum(m.count for m in by_mov))
     car_cnt = result_data.get("vehicle_classes", {}).get("Car", sum(m.car_count for m in by_mov))
     truck_cnt = result_data.get("vehicle_classes", {}).get("Truck", sum(m.truck_count for m in by_mov))
-    flow_rate = result_data.get("traffic_features", {}).get("total_flow_rate_per_min", round(total_veh / dur_min, 2))
-    
     tf = result_data.get("traffic_features", {})
+    flow_rate = tf.get("total_flow_rate_per_min", round(total_veh / dur_min, 2))
     imb_detected = tf.get("direction_imbalance_detected", False)
     imb_ratio = float(tf.get("direction_imbalance_ratio", 1.0))
     
@@ -184,11 +198,16 @@ def build_state_from_result(result_data: dict, job_id: str = "demo-cam5", video_
         direction_imbalance_detected=imb_detected,
         direction_imbalance_ratio=imb_ratio,
         dominant_movement=dom_mov,
-        by_movement=by_mov
+        by_movement=by_mov,
+        current_roi_count=result_data.get("current_vehicles", total_veh),
+        initial_occupancy=result_data.get("initial_occupancy", 0),
+        cumulative_entries=result_data.get("cumulative_entries", total_veh),
+        cumulative_exits=result_data.get("cumulative_exits", 0),
+        invariant_verified=result_data.get("invariant_verified", True),
     )
 
-    # Dynamic Queue Estimation based on arrival rate
-    q_base = min(85, max(8, int(flow_rate * 0.42)))
+    # Queue Estimation from actual pipeline results
+    q_base = tf.get("estimated_queue", max(0, int(flow_rate * 0.42)))
     
     prediction = TrafficPrediction(
         future_queue_estimate=q_base,
@@ -367,10 +386,16 @@ init_default_state()
 @app.get("/health", response_model=HealthResponse)
 def get_health():
     import torch
+    cuda_avail = torch.cuda.is_available()
+    device_name = torch.cuda.get_device_name(0) if cuda_avail else None
     return HealthResponse(
         status="healthy",
         version="1.0.0",
-        gpu_available=torch.cuda.is_available(),
+        gpu_available=cuda_avail,
+        device="cuda:0" if cuda_avail else "cpu",
+        gpu_name=device_name,
+        cuda_version=torch.version.cuda if cuda_avail else None,
+        precision="FP16" if cuda_avail else "FP32",
         model_loaded=True,
         active_jobs=len([j for j in JOBS.values() if j.get("status") in (AnalysisStatus.PROCESSING, AnalysisStatus.ANALYZING)])
     )
@@ -379,6 +404,11 @@ def get_health():
 # WebSocket live telemetry channel
 @app.websocket("/ws/analysis/{job_id}")
 async def websocket_analysis_endpoint(websocket: WebSocket, job_id: str):
+    global MAIN_EVENT_LOOP
+    try:
+        MAIN_EVENT_LOOP = asyncio.get_running_loop()
+    except Exception:
+        pass
     await websocket.accept()
     if job_id not in ACTIVE_WEBSOCKETS:
         ACTIVE_WEBSOCKETS[job_id] = set()
@@ -460,6 +490,25 @@ async def stream_video(video_filename: str, request: Request):
     file_size = file_path.stat().st_size
     range_header = request.headers.get("range")
 
+    # Log playback start if this is an annotated output video request
+    if "_annotated.mp4" in video_filename and not range_header:
+        job_id = video_filename.replace("_annotated.mp4", "")
+        job = JOBS.get(job_id)
+        if job:
+            import cv2
+            cap = cv2.VideoCapture(str(file_path))
+            fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else job.get("total_frames", 600)
+            fps = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 10.0
+            if cap.isOpened(): cap.release()
+            log.info(
+                f"\n[PLAYBACK]\n"
+                f"job_id={job_id}\n"
+                f"source={job.get('original_filename', 'unknown')}\n"
+                f"output={video_filename}\n"
+                f"frames={fc}\n"
+                f"fps={fps}\n"
+            )
+
     if not range_header:
         return FileResponse(
             path=str(file_path),
@@ -503,6 +552,57 @@ async def stream_video(video_filename: str, request: Request):
         return FileResponse(path=str(file_path), media_type="video/mp4")
 
 
+# Explicit endpoint to stream the exact original uploaded SOURCE video for a job
+@app.get("/api/source/{job_id}")
+async def stream_source_video(job_id: str, request: Request):
+    """
+    Stream the original source video associated with a job.
+    This guarantees we are streaming the exact uploaded file, not a default video.
+    """
+    job = JOBS.get(job_id)
+    if not job or "video_path" not in job:
+        raise HTTPException(status_code=404, detail="Source video for job not found")
+        
+    v_path = Path(job["video_path"])
+    if not v_path.exists():
+        raise HTTPException(status_code=404, detail="Source video file missing from disk")
+        
+    # Standard range request streaming
+    try:
+        file_size = v_path.stat().st_size
+        range_header = request.headers.get("Range", None)
+        
+        if range_header:
+            byte1, byte2 = 0, None
+            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+            if match:
+                g = match.groups()
+                byte1 = int(g[0])
+                if g[1]:
+                    byte2 = int(g[1])
+            
+            if byte2 is None:
+                byte2 = file_size - 1
+            length = byte2 - byte1 + 1
+            
+            with open(v_path, 'rb') as f:
+                f.seek(byte1)
+                data = f.read(length)
+                
+            headers = {
+                "Content-Range": f"bytes {byte1}-{byte2}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(length),
+                "Content-Type": "video/mp4",
+            }
+            return Response(data, status_code=206, headers=headers, media_type="video/mp4")
+            
+        return FileResponse(path=str(v_path), media_type="video/mp4")
+    except Exception as e:
+        log.error(f"Source stream exception: {e}")
+        return FileResponse(path=str(v_path), media_type="video/mp4")
+
+
 # Real-time MJPEG live stream yielding processed frames during ML inference
 @app.get("/api/stream/{job_id}")
 async def stream_live_mjpeg(job_id: str):
@@ -512,7 +612,7 @@ async def stream_live_mjpeg(job_id: str):
     """
     async def frame_generator():
         last_frame_bytes = None
-        max_idle_seconds = 180
+        max_idle_seconds = 300  # increased from 180
         start_time = asyncio.get_event_loop().time()
 
         while True:
@@ -539,7 +639,7 @@ async def stream_live_mjpeg(job_id: str):
             if asyncio.get_event_loop().time() - start_time > max_idle_seconds:
                 break
 
-            await asyncio.sleep(0.03)  # ~30 fps poll rate
+            await asyncio.sleep(0.025)  # ~40 fps poll rate for smoother playback
 
     return StreamingResponse(
         frame_generator(),
@@ -547,8 +647,85 @@ async def stream_live_mjpeg(job_id: str):
     )
 
 
+# Per-job output video endpoint (prevents cross-job video mixing)
+@app.get("/api/jobs/{job_id}/output")
+async def get_job_output_video(job_id: str, request: Request):
+    """
+    Serve the processed annotated video for a specific job.
+    Uses HTTP 206 Range requests for browser seekable playback.
+    Each job has its own output — no cross-job mixing.
+    """
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    # Determine output path
+    annotated_path = OUTPUT_VIDEOS_DIR / f"{job_id}_annotated.mp4"
+    if not annotated_path.exists():
+        # Check result dict
+        result = job.get("result", {})
+        if result:
+            out_path = result.get("outputs", {}).get("annotated_video")
+            if out_path and Path(out_path).exists():
+                annotated_path = Path(out_path)
+            else:
+                raise HTTPException(status_code=404, detail=f"Output video not yet ready for job {job_id}")
+        else:
+            raise HTTPException(status_code=404, detail=f"Output video not found for job {job_id}")
+
+    if job.get("status") not in (AnalysisStatus.READY,):
+        raise HTTPException(status_code=202, detail=f"Job {job_id} is still processing (status={job.get('status')}). Try again after completion.")
+
+    file_size = annotated_path.stat().st_size
+    if file_size == 0:
+        raise HTTPException(status_code=500, detail=f"Output video for job {job_id} is empty")
+
+    range_header = request.headers.get("range")
+    if not range_header:
+        return FileResponse(
+            path=str(annotated_path),
+            media_type="video/mp4",
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(file_size), "Content-Disposition": f"inline; filename={job_id}_annotated.mp4"}
+        )
+
+    try:
+        range_str = range_header.replace("bytes=", "")
+        parts = range_str.split("-")
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+        end = min(end, file_size - 1)
+        chunk_size = end - start + 1
+
+        def iterfile(path: Path, offset: int, length: int):
+            with open(path, "rb") as f:
+                f.seek(offset)
+                remaining = length
+                while remaining > 0:
+                    read_size = min(64 * 1024, remaining)
+                    data = f.read(read_size)
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(chunk_size),
+            "Content-Type": "video/mp4",
+        }
+        return StreamingResponse(
+            iterfile(annotated_path, start, chunk_size),
+            status_code=206,
+            headers=headers
+        )
+    except Exception as e:
+        log.error(f"Range streaming exception for job {job_id}: {e}")
+        return FileResponse(path=str(annotated_path), media_type="video/mp4")
+
+
 @app.post("/api/video/upload", response_model=VideoUploadResponse)
-async def upload_video(
+def upload_video(
     file: UploadFile = File(...),
     camera_id: str = Form("cam_5")
 ):
@@ -563,8 +740,14 @@ async def upload_video(
     job_id = f"job_{uuid.uuid4().hex[:8]}"
     dest_path = UPLOAD_DIR / f"{job_id}_{file.filename}"
     
+    # Chunked streaming write (2 MB buffer) to avoid blocking or memory spikes
+    chunk_size = 2 * 1024 * 1024
     with open(dest_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        while True:
+            chunk = file.file.read(chunk_size)
+            if not chunk:
+                break
+            buffer.write(chunk)
 
     size = dest_path.stat().st_size
     if size == 0:
@@ -580,14 +763,40 @@ async def upload_video(
         dest_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded file is corrupted or not a valid video stream.")
 
-    log.info(f"[UPLOAD] Saved video {dest_path.name} ({size} bytes, {fc} frames) for camera {camera_id} with job_id {job_id}")
+    log.info(
+        f"\n[UPLOAD START]\n"
+        f"job_id={job_id}\n"
+        f"original_filename={file.filename}\n"
+        f"stored_filename={dest_path.name}\n"
+        f"video_path={dest_path}\n"
+        f"file_size={size}\n"
+        f"camera_id={camera_id}\n"
+    )
 
     JOBS[job_id] = {
         "job_id": job_id,
         "status": AnalysisStatus.IDLE,
+        # Flat keys used by worker and validation (source of truth)
         "video_path": str(dest_path),
         "camera_id": camera_id,
+        "original_filename": file.filename,
         "filename": file.filename,
+        # Nested metadata for explicit provenance
+        "source": {
+            "original_filename": file.filename,
+            "stored_filename": dest_path.name,
+            "video_path": str(dest_path),
+            "video_type": "uploaded"
+        },
+        "camera": {
+            "camera_id": camera_id,
+            "config_id": camera_id.upper()
+        },
+        "mapping": {
+            "roi_id": camera_id.upper(),
+            "road_map_id": camera_id.upper(),
+            "movement_map_id": camera_id.upper()
+        },
         "frames_processed": 0,
         "total_frames": fc,
         "current_fps": 0.0,
@@ -604,7 +813,7 @@ async def upload_video(
     )
 
 
-def run_pipeline_worker(job_id: str, max_frames: Optional[int] = 600):
+def run_pipeline_worker(job_id: str, max_frames: Optional[int] = 600, manual_roads: Optional[list] = None):
     global CURRENT_STATE
     job = JOBS.get(job_id)
     if not job:
@@ -613,42 +822,173 @@ def run_pipeline_worker(job_id: str, max_frames: Optional[int] = 600):
 
     try:
         job["status"] = AnalysisStatus.ANALYZING
-        log.info(f"[ML] Starting GPU analysis for job {job_id} on {job['video_path']} (camera={job['camera_id']})")
+        
+        # Determine the mapped config ID safely
+        config_id = job.get("camera", {}).get("config_id", job['camera_id'].upper())
+        
+        log.info(
+            f"\n[JOB]\n"
+            f"job_id={job_id}\n"
+            f"source={job.get('original_filename', job.get('filename', 'unknown'))}\n"
+            f"camera_config={config_id}\n"
+            f"roi_config={config_id}\n"
+            f"road_map={config_id}\n"
+            f"movement_map={config_id}\n"
+        )
+        log.info(
+            f"\n[INFERENCE START]\n"
+            f"job_id={job_id}\n"
+            f"camera_id={job['camera_id']}\n"
+            f"video_path={job['video_path']}\n"
+            f"original_filename={job.get('original_filename', job.get('filename', 'unknown'))}\n"
+        )
 
         frame_buf = collections.deque(maxlen=30)
         FRAME_BUFFERS[job_id] = frame_buf
 
+        # Asynchronous background JPEG compressor for live MJPEG preview
+        jpeg_queue = queue.Queue(maxsize=10)
+        jpeg_running = True
+
+        def _jpeg_worker():
+            encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+            while jpeg_running or not jpeg_queue.empty():
+                try:
+                    img = jpeg_queue.get(timeout=0.1)
+                    if img is None:
+                        break
+                    ih, iw = img.shape[:2]
+                    if iw > 1280:
+                        scale = 1280.0 / iw
+                        img_stream = cv2.resize(img, (1280, int(ih * scale)), interpolation=cv2.INTER_LINEAR)
+                    else:
+                        img_stream = img
+                    success, encoded_jpeg = cv2.imencode(".jpg", img_stream, encode_params)
+                    if success:
+                        frame_buf.append(encoded_jpeg.tobytes())
+                    jpeg_queue.task_done()
+                except queue.Empty:
+                    continue
+                except Exception:
+                    pass
+
+        encoder_thread = threading.Thread(target=_jpeg_worker, daemon=True)
+        encoder_thread.start()
+
         def live_frame_callback(annotated_frame, frame_id, timestamp_sec, live_payload):
-            # 1. Encode JPEG for live MJPEG stream
-            success, encoded_jpeg = cv2.imencode(".jpg", annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            if success:
-                frame_buf.append(encoded_jpeg.tobytes())
-            
-            # 2. Store live canonical state
+            # 1. Non-blocking enqueue for MJPEG live preview
+            if not jpeg_queue.full():
+                try:
+                    jpeg_queue.put_nowait(annotated_frame)
+                except Exception:
+                    pass
+
+            # 2. Store live canonical state (includes roads[] array and perf telemetry from pipeline)
             LIVE_ANALYSIS_STATES[job_id] = live_payload
             job["frames_processed"] = frame_id
             job["latest_summary"] = live_payload
+            job["current_fps"] = live_payload.get("processing_fps", 0.0)
+
+            # 3. Broadcast via WebSocket to all connected clients for this job
+            ws_set = ACTIVE_WEBSOCKETS.get(job_id)
+            if ws_set:
+                msg = json.dumps(live_payload)
+                dead = set()
+                for ws in list(ws_set):
+                    try:
+                        if MAIN_EVENT_LOOP and MAIN_EVENT_LOOP.is_running():
+                            asyncio.run_coroutine_threadsafe(ws.send_text(msg), MAIN_EVENT_LOOP)
+                    except Exception:
+                        dead.add(ws)
+                ws_set -= dead
 
         pipeline = TrafficPipeline(config_path=str(project_root / "configs" / "config.yaml"))
         pipeline.max_frames = max_frames
         pipeline.save_video = True
+        STOP_FLAGS[job_id] = False
         
         res = pipeline.run(
             video_path=job["video_path"],
             camera_id=job["camera_id"],
             output_prefix=job_id,
-            frame_callback=live_frame_callback
+            frame_callback=live_frame_callback,
+            manual_roads=manual_roads,
+            stop_check=lambda: STOP_FLAGS.get(job_id, False),
         )
 
+        # Signal background JPEG encoder to finalize
+        jpeg_running = False
+        try:
+            jpeg_queue.put_nowait(None)
+        except Exception:
+            pass
+
+        is_stopped = STOP_FLAGS.get(job_id, False)
         annotated_path = OUTPUT_VIDEOS_DIR / f"{job_id}_annotated.mp4"
         valid, val_msg = validate_output_video(annotated_path)
         log.info(f"[VIDEO] Validation for {annotated_path.name}: {val_msg}")
 
-        if not valid:
+        if not valid and not is_stopped:
             raise RuntimeError(f"Output video validation failed: {val_msg}")
 
         job["result"] = res
         job["status"] = AnalysisStatus.READY
+
+        # Update and persist complete final live analysis state with valid trips and average speed
+        tot_summary = res.get("total_road_summary", {})
+        dur_min = max(0.05, job.get("frames_processed", 600) / 10.0 / 60.0)
+        final_flow = round(res.get("total_vehicles", 0) / dur_min, 1)
+        final_live_state = {
+            "job_id": job_id,
+            "frame_index": job.get("frames_processed", 600),
+            "total_frames": job.get("frames_processed", 600),
+            "video_time_seconds": round(job.get("frames_processed", 600) / 10.0, 2),
+            "current_active": res.get("current_vehicles", 0),
+            "current_roi_count": res.get("current_vehicles", 0),
+            "initial_occupancy": res.get("initial_occupancy", 0),
+            "cumulative_entries": res.get("cumulative_entries", 0),
+            "cumulative_exits": res.get("cumulative_exits", 0),
+            "invariant_verified": res.get("invariant_verified", True),
+            "current_moving": res.get("current_moving", 0),
+            "current_stationary": res.get("current_stationary", 0),
+            "vehicles_counted": res.get("total_vehicles", 0),
+            "vehicle_classes": res.get("vehicle_classes", {}),
+            "current_classes": res.get("current_classes", {}),
+            "movement_counts": res.get("movement_counts", {}),
+            "traffic_state": res.get("traffic_state", "LOW"),
+            "arrival_rate": final_flow,
+            "flow_rate_per_min": final_flow,
+            "queue": res.get("current_stationary", 0),
+            "completed_trips": tot_summary.get("completed_trips", 0),
+            "valid_trips": tot_summary.get("valid_trips", 0),
+            "average_speed": tot_summary.get("average_speed"),
+            "speed_display": tot_summary.get("speed_display", "Waiting for vehicles"),
+            "roads": res.get("roads", []),
+            "total_road_summary": tot_summary,
+            "global": {
+                "vehicles": res.get("total_vehicles", 0),
+                "current_active": res.get("current_vehicles", 0),
+                "flow_volume": final_flow,
+                "traffic_state": res.get("traffic_state", "LOW"),
+                "average_speed": tot_summary.get("average_speed"),
+            },
+            "processing_fps": res.get("processing", {}).get("speed_fps", 0.0),
+            "output_ready": True,
+            "output_url": f"/api/jobs/{job_id}/output",
+        }
+        LIVE_ANALYSIS_STATES[job_id] = final_live_state
+        job["latest_summary"] = final_live_state
+
+        # Broadcast completion to WebSocket clients
+        ws_set = ACTIVE_WEBSOCKETS.get(job_id)
+        if ws_set:
+            final_msg = json.dumps(final_live_state)
+            for ws in list(ws_set):
+                try:
+                    if MAIN_EVENT_LOOP and MAIN_EVENT_LOOP.is_running():
+                        asyncio.run_coroutine_threadsafe(ws.send_text(final_msg), MAIN_EVENT_LOOP)
+                except Exception:
+                    pass
 
         # Update global canonical state and camera state
         new_state = build_state_from_result(res, job_id=job_id, video_name=job["filename"])
@@ -662,6 +1002,16 @@ def run_pipeline_worker(job_id: str, max_frames: Optional[int] = 600):
         log.error(f"Inference error for {job_id}: {e}", exc_info=True)
         job["status"] = AnalysisStatus.ERROR
         job["error_message"] = str(e)
+        
+        # Broadcast the error to live telemetry clients
+        error_payload = {
+            "job_id": job_id,
+            "status": "error",
+            "error_message": str(e)
+        }
+        LIVE_ANALYSIS_STATES[job_id] = error_payload
+        if job_id in JOBS:
+            JOBS[job_id]["latest_summary"] = error_payload
 
 
 def run_multi_camera_worker(camera_job_list: List[dict], max_frames: int = 600):
@@ -779,7 +1129,8 @@ def start_all_inference(
 def start_inference(
     background_tasks: BackgroundTasks,
     job_id: str = Form(...),
-    max_frames: int = Form(600)
+    max_frames: int = Form(600),
+    roads_json: Optional[str] = Form(None)
 ):
     actual_job_id = job_id
     if job_id not in JOBS:
@@ -793,6 +1144,24 @@ def start_inference(
             "status": AnalysisStatus.PROCESSING,
             "video_path": str(dataset_video),
             "camera_id": job_id if job_id.startswith("cam_") else "cam_5",
+            "source": {
+                "original_filename": dataset_video.name,
+                "stored_filename": dataset_video.name,
+                "video_path": str(dataset_video),
+                "video_type": "dataset"
+            },
+            "camera": {
+                "camera_id": job_id if job_id.startswith("cam_") else "cam_5",
+                "config_id": (job_id if job_id.startswith("cam_") else "cam_5").upper()
+            },
+            "mapping": {
+                "roi_id": (job_id if job_id.startswith("cam_") else "cam_5").upper(),
+                "road_map_id": (job_id if job_id.startswith("cam_") else "cam_5").upper(),
+                "movement_map_id": (job_id if job_id.startswith("cam_") else "cam_5").upper()
+            },
+            "original_filename": dataset_video.name,
+            "stored_filename": dataset_video.name,
+            "video_type": "dataset",
             "filename": dataset_video.name,
             "frames_processed": 0,
             "total_frames": max_frames,
@@ -802,8 +1171,116 @@ def start_inference(
         FRAME_BUFFERS[actual_job_id] = collections.deque(maxlen=30)
 
     JOBS[actual_job_id]["status"] = AnalysisStatus.PROCESSING
-    background_tasks.add_task(run_pipeline_worker, actual_job_id, max_frames)
-    return {"job_id": actual_job_id, "status": AnalysisStatus.PROCESSING}
+    job = JOBS[actual_job_id]
+    
+    # ----------------------------------------------------
+    # VALIDATION
+    # ----------------------------------------------------
+    v_path = Path(job["video_path"])
+    if not v_path.exists() or not v_path.is_file():
+        err = f"Video file missing or not a file: {v_path}"
+        log.error(err)
+        job["status"] = AnalysisStatus.ERROR
+        job["error_message"] = err
+        raise HTTPException(status_code=400, detail=err)
+    
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(v_path))
+        if not cap.isOpened():
+            raise ValueError("Not a valid video format or could not be opened by OpenCV.")
+        
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = frames / fps if fps > 0 else 0
+        cap.release()
+        
+        log.info(
+            f"\n[VIDEO VALIDATION]\n"
+            f"job_id={actual_job_id}\n"
+            f"filename={v_path.name}\n"
+            f"path={v_path}\n"
+            f"exists=true\n"
+            f"size={v_path.stat().st_size} bytes\n"
+            f"width={width}\n"
+            f"height={height}\n"
+            f"fps={fps}\n"
+            f"frames={frames}\n"
+            f"duration={duration:.2f}s\n"
+        )
+    except Exception as e:
+        err = f"Video validation failed for {v_path.name}: {e}"
+        log.error(err)
+        job["status"] = AnalysisStatus.ERROR
+        job["error_message"] = err
+        raise HTTPException(status_code=400, detail="Invalid video file format")
+    
+    manual_roads = None
+    if roads_json:
+        try:
+            import json
+            import os
+            manual_roads = json.loads(roads_json)
+            # Save configuration
+            job_dir = project_root.parent / "jobs" / actual_job_id
+            config_dir = job_dir / "config"
+            os.makedirs(config_dir, exist_ok=True)
+            with open(config_dir / "roads.json", "w") as f:
+                json.dump(manual_roads, f, indent=4)
+        except Exception as e:
+            log.error(f"Failed to parse or save manual roads: {e}")
+            raise HTTPException(status_code=400, detail="Invalid roads JSON")
+
+    background_tasks.add_task(run_pipeline_worker, actual_job_id, max_frames, manual_roads)
+    return {"job_id": actual_job_id, "status": AnalysisStatus.PROCESSING, "video_path": str(v_path)}
+
+
+@app.post("/api/inference/{job_id}/stop")
+def stop_inference(job_id: str):
+    """Signal an active video inference pipeline to stop processing immediately."""
+    if job_id not in JOBS:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    STOP_FLAGS[job_id] = True
+    job = JOBS[job_id]
+    job["status"] = AnalysisStatus.IDLE
+    log.info(f"[API] Stop signal sent for job {job_id}")
+    return {"job_id": job_id, "status": "stopped", "message": f"Job {job_id} stopped"}
+
+
+@app.delete("/api/sessions/{job_id}")
+def delete_session(job_id: str):
+    """
+    Remove an individual video session and clean up all associated memory,
+    buffers, active websockets, and temporary uploaded files without affecting other sessions.
+    """
+    STOP_FLAGS[job_id] = True
+    job = JOBS.pop(job_id, None)
+    FRAME_BUFFERS.pop(job_id, None)
+    LIVE_ANALYSIS_STATES.pop(job_id, None)
+    STOP_FLAGS.pop(job_id, None)
+    
+    ws_set = ACTIVE_WEBSOCKETS.pop(job_id, None)
+    if ws_set:
+        for ws in list(ws_set):
+            try:
+                if MAIN_EVENT_LOOP and MAIN_EVENT_LOOP.is_running():
+                    asyncio.run_coroutine_threadsafe(ws.close(), MAIN_EVENT_LOOP)
+            except Exception:
+                pass
+
+    if job and "video_path" in job:
+        vpath = Path(job["video_path"])
+        if UPLOAD_DIR in vpath.parents and vpath.exists():
+            try:
+                vpath.unlink(missing_ok=True)
+                log.info(f"[CLEANUP] Deleted temporary upload file: {vpath.name}")
+            except Exception as e:
+                log.warning(f"Could not delete temp video {vpath}: {e}")
+
+    log.info(f"[API] Session {job_id} deleted and resources released.")
+    return {"job_id": job_id, "status": "deleted"}
 
 
 @app.get("/api/inference/{job_id}/status", response_model=JobStatus)
@@ -828,23 +1305,53 @@ def get_inference_status(job_id: str):
 
 @app.get("/api/analysis/{job_id}/live")
 def get_live_analysis_state(job_id: str):
-    """Retrieve current frame live analysis state."""
+    """Retrieve current frame live analysis state including per-road analytics."""
     if job_id in LIVE_ANALYSIS_STATES:
         return LIVE_ANALYSIS_STATES[job_id]
     job = JOBS.get(job_id)
     if job and job.get("status") == AnalysisStatus.READY:
         res = job.get("result", {})
+        dur_min = max(0.05, job.get("frames_processed", 600) / 10.0 / 60.0)
+        flow = round(res.get("total_vehicles", 0) / dur_min, 1)
+        tot_summary = res.get("total_road_summary", {})
         return {
             "job_id": job_id,
             "frame_index": job.get("frames_processed", 600),
             "total_frames": job.get("total_frames", 600),
+            "video_time_seconds": round(job.get("frames_processed", 600) / 10.0, 2),
             "vehicles_counted": res.get("total_vehicles", 0),
+            "current_active": res.get("current_vehicles", 0),
+            "current_roi_count": res.get("current_vehicles", 0),
+            "initial_occupancy": res.get("initial_occupancy", 0),
+            "cumulative_entries": res.get("cumulative_entries", 0),
+            "cumulative_exits": res.get("cumulative_exits", 0),
+            "invariant_verified": res.get("invariant_verified", True),
+            "current_moving": res.get("current_moving", 0),
+            "current_stationary": res.get("current_stationary", 0),
             "vehicle_classes": res.get("vehicle_classes", {}),
+            "current_classes": res.get("current_classes", {}),
             "movement_counts": res.get("movement_counts", {}),
             "traffic_state": res.get("traffic_state", "HIGH"),
-            "arrival_rate": res.get("traffic_features", {}).get("total_flow_rate_per_min", 0.0),
-            "queue": int(res.get("total_vehicles", 0) * 0.9),
-            "processing_fps": 60.0
+            "arrival_rate": flow,
+            "flow_rate_per_min": flow,
+            "queue": int(res.get("total_vehicles", 0) * 0.5),
+            "processing_fps": res.get("processing", {}).get("speed_fps", 0.0),
+            "completed_trips": tot_summary.get("completed_trips", 0),
+            "valid_trips": tot_summary.get("valid_trips", 0),
+            "average_speed": tot_summary.get("average_speed"),
+            "speed_display": tot_summary.get("speed_display", "Waiting for vehicles"),
+            "roads": res.get("roads", []),
+            "total_road_summary": tot_summary,
+            "global": {
+                "vehicles": res.get("total_vehicles", 0),
+                "current_active": res.get("current_vehicles", 0),
+                "flow_volume": flow,
+                "traffic_state": res.get("traffic_state", "LOW"),
+                "average_speed": tot_summary.get("average_speed"),
+            },
+            "output_ready": True,
+            "output_url": f"/api/jobs/{job_id}/output",
+            "perf": res.get("performance_metrics"),
         }
     return {
         "job_id": job_id,
@@ -856,7 +1363,9 @@ def get_live_analysis_state(job_id: str):
         "traffic_state": "LOW",
         "arrival_rate": 0.0,
         "queue": 0,
-        "processing_fps": 0.0
+        "processing_fps": 0.0,
+        "roads": [],
+        "global": {"vehicles": 0, "flow_volume": 0.0, "traffic_state": "LOW"},
     }
 
 

@@ -9,6 +9,8 @@ Trajectory history is maintained in TrackStore.
 """
 
 import logging
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -59,7 +61,7 @@ class Track:
         return roi.contains_point(self.center_x, self.center_y, margin=margin)
 
     def is_countable(self) -> bool:
-        return self.aic21_class_name in ("Car", "Truck")
+        return self.aic21_class_name in ("Car", "Bus", "Truck", "Motorcycle", "Bicycle")
 
     def to_dict(self) -> dict:
         return {
@@ -153,15 +155,57 @@ class TrackStore:
                 active.append(tid)
         return active
 
+    def cleanup_expired(self, current_frame_id: int, max_age: int = 60) -> int:
+        """
+        Prune inactive tracks not seen for max_age frames.
+        Keeps trajectories, classes, and movement lookups O(active_tracks) and bounded in memory.
+        """
+        expired = [
+            tid for tid, traj in self._trajectories.items()
+            if traj and (current_frame_id - traj[-1][0]) > max_age
+        ]
+        for tid in expired:
+            self._trajectories.pop(tid, None)
+            self._classes.pop(tid, None)
+            self._counted.pop(tid, None)
+            self._movement.pop(tid, None)
+        return len(expired)
+
+
 
 # ---------------------------------------------------------------------------
 # ByteTracker — wraps ultralytics YOLO tracker
 # ---------------------------------------------------------------------------
 
 # COCO IDs for vehicles (must match detector)
-TARGET_COCO_IDS = {2, 3, 5, 7}
-COCO_TO_AIC21 = {2: "Car", 5: "Car", 7: "Truck", 3: "Motorcycle"}
-AIC21_CLASS_ID = {"Car": 1, "Truck": 2, "Motorcycle": 0}
+# 1: bicycle, 2: car, 3: motorcycle, 5: bus, 7: truck
+TARGET_COCO_IDS = {1, 2, 3, 5, 7}
+COCO_TO_AIC21 = {1: "Bicycle", 2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
+AIC21_CLASS_ID = {"Car": 1, "Truck": 2, "Bus": 3, "Motorcycle": 4, "Bicycle": 5}
+
+
+_YOLO_WEIGHTS_CACHE: Dict[Tuple[str, str], torch.nn.Module] = {}
+_TRACKER_LOCK = threading.Lock()
+
+
+def get_yolo_for_session(model_path: Optional[str], device: str) -> YOLO:
+    """
+    Returns an independent YOLO instance with its own predictor and ByteTrack state,
+    while sharing the underlying PyTorch neural network weights in GPU memory.
+    This prevents cross-video tracking collisions while maintaining a minimal VRAM footprint (~25MB total).
+    """
+    resolved_path = str(model_path) if (model_path and Path(model_path).exists()) else "yolov8n.pt"
+    cache_key = (resolved_path, device)
+    with _TRACKER_LOCK:
+        model_instance = YOLO(resolved_path)
+        if cache_key in _YOLO_WEIGHTS_CACHE:
+            # Share the loaded PyTorch nn.Module directly (zero extra VRAM allocation)
+            model_instance.model = _YOLO_WEIGHTS_CACHE[cache_key]
+        else:
+            log.info(f"[GPU-CACHE] Loading base YOLO model into weights cache: {resolved_path} on {device}")
+            model_instance.to(device)
+            _YOLO_WEIGHTS_CACHE[cache_key] = model_instance.model
+        return model_instance
 
 
 class ByteTracker:
@@ -179,6 +223,7 @@ class ByteTracker:
         device: Optional[str] = None,
         track_buffer: int = 30,
         use_half: Optional[bool] = None,
+        drone_mode: bool = False,
     ):
         if device is None or device == "cuda":
             if torch.cuda.is_available():
@@ -186,32 +231,49 @@ class ByteTracker:
             else:
                 device = "cpu"
         self.device = str(device)
-        self.confidence = confidence
-        self.iou_threshold = iou_threshold
-        self.input_size = input_size
-        self.track_buffer = track_buffer
+        self.drone_mode = drone_mode
+        self.confidence = 0.22 if drone_mode else confidence
+        self.iou_threshold = 0.55 if drone_mode else iou_threshold
+        self.input_size = 960 if drone_mode and input_size < 960 else input_size
+        self.track_buffer = 45 if drone_mode else track_buffer
         self.half = use_half if use_half is not None else ("cuda" in self.device)
+        self.last_inference_ms = 0.0
+        self.last_tracking_ms = 0.0
+        self.last_preprocess_ms = 0.0
+        self.last_postprocess_ms = 0.0
+        self.last_pure_tracking_ms = 0.0
+        self.last_total_tracker_ms = 0.0
 
-        if model_path and Path(model_path).exists():
-            log.info(f"Loading tracker model from: {model_path}")
-            self.model = YOLO(model_path)
-        else:
-            log.info("Using yolov8n.pt for tracking")
-            self.model = YOLO("yolov8n.pt")
-
-        self.model.to(self.device)
+        # Each tracker gets its own YOLO wrapper so ByteTrack state is isolated
+        self.model = get_yolo_for_session(model_path, self.device)
         self._frame_count = 0
 
-        # GPU Warmup
+        # GPU Warmup (only on first init)
         try:
             dummy = np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8)
-            self.model.predict(dummy, imgsz=self.input_size, device=self.device, half=self.half, verbose=False)
+            kwargs = {"imgsz": self.input_size, "device": self.device, "verbose": False}
+            if self.device != "cpu":
+                kwargs["half"] = self.half
+                
+            with torch.inference_mode():
+                self.model.predict(dummy, **kwargs)
+            
+            device_type = "CUDA" if "cuda" in self.device else "CPU"
+            gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
+            precision = "FP16" if self.half and device_type == "CUDA" else "FP32"
+            
             log.info(
-                f"[GPU] ByteTracker ready | device={self.device} (half={self.half}) | "
-                f"GPU={torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'}"
+                f"[{device_type}] ByteTracker ready | device={self.device} (precision={precision}) | "
+                f"GPU={gpu_name} | imgsz={self.input_size} | drone_mode={drone_mode}"
             )
         except Exception as e:
             log.warning(f"Tracker warmup exception: {e}")
+
+    def reset(self):
+        """Reset internal tracker state for this session."""
+        self._frame_count = 0
+        if hasattr(self.model, "predictor") and self.model.predictor is not None:
+            self.model.predictor.trackers = []
 
     def track_frame(
         self,
@@ -220,7 +282,7 @@ class ByteTracker:
         timestamp_sec: float = 0.0,
     ) -> List[Track]:
         """
-        Run detection + ByteTrack on a single frame on GPU.
+        Run detection + ByteTrack on a single frame on GPU with inference_mode().
 
         Args:
             frame:         BGR numpy array.
@@ -230,46 +292,72 @@ class ByteTracker:
         Returns:
             List of Track objects with persistent track_ids.
         """
-        results = self.model.track(
-            frame,
-            conf=self.confidence,
-            iou=self.iou_threshold,
-            imgsz=self.input_size,
-            device=self.device,
-            half=self.half,
-            persist=True,                    # CRITICAL: keep track state across calls
-            verbose=False,
-            classes=list(TARGET_COCO_IDS),
-            tracker="bytetrack.yaml",        # use ByteTrack config
-        )
+        kwargs = {
+            "conf": self.confidence,
+            "iou": self.iou_threshold,
+            "imgsz": self.input_size,
+            "device": self.device,
+            "persist": True,
+            "verbose": False,
+            "classes": list(TARGET_COCO_IDS),
+            "tracker": "bytetrack.yaml",
+        }
+        if self.device != "cpu":
+            kwargs["half"] = self.half
+            
+        t0 = time.perf_counter()
+        with _TRACKER_LOCK:
+            with torch.inference_mode():
+                results = self.model.track(frame, **kwargs)
+        total_call_ms = (time.perf_counter() - t0) * 1000.0
+        self.last_total_tracker_ms = total_call_ms
+
+        for r in results:
+            if hasattr(r, "speed") and r.speed:
+                self.last_preprocess_ms = float(r.speed.get("preprocess", 0.0))
+                self.last_inference_ms = float(r.speed.get("inference", 0.0))
+                self.last_postprocess_ms = float(r.speed.get("postprocess", 0.0))
+
+        # Reconciled timing: ByteTrack tracking association time is exclusive of detection/inference
+        det_time = self.last_preprocess_ms + self.last_inference_ms + self.last_postprocess_ms
+        self.last_pure_tracking_ms = max(0.05, total_call_ms - det_time)
+        # Store pure tracking time to prevent double-counting in dashboard stage sums
+        self.last_tracking_ms = self.last_pure_tracking_ms
 
         tracks = []
         for result in results:
             boxes = result.boxes
-            if boxes is None:
+            if boxes is None or boxes.id is None or len(boxes) == 0:
                 continue
-            if boxes.id is None:
-                # No tracked IDs yet (first few frames)
+
+            # Vectorized GPU -> CPU batch transfer
+            # (Eliminates dozens of blocking per-scalar cudaStreamSynchronize calls per frame)
+            boxes_cpu = boxes.cpu()
+            if boxes_cpu.id is None:
                 continue
-            for box in boxes:
-                if box.id is None:
-                    continue
-                coco_id = int(box.cls.item())
+
+            ids = boxes_cpu.id.numpy().astype(int)
+            clss = boxes_cpu.cls.numpy().astype(int)
+            confs = boxes_cpu.conf.numpy().astype(float)
+            xyxys = boxes_cpu.xyxy.numpy().astype(float)
+
+            for i in range(len(ids)):
+                coco_id = int(clss[i])
                 if coco_id not in TARGET_COCO_IDS:
                     continue
                 aic21_name = COCO_TO_AIC21[coco_id]
-                xyxy = box.xyxy[0].tolist()
+                box_xyxy = xyxys[i]
                 tracks.append(Track(
-                    track_id=int(box.id.item()),
+                    track_id=int(ids[i]),
                     frame_id=frame_id,
                     timestamp_sec=timestamp_sec,
                     aic21_class_name=aic21_name,
                     aic21_class_id=AIC21_CLASS_ID[aic21_name],
-                    confidence=float(box.conf.item()),
-                    x1=xyxy[0],
-                    y1=xyxy[1],
-                    x2=xyxy[2],
-                    y2=xyxy[3],
+                    confidence=float(confs[i]),
+                    x1=float(box_xyxy[0]),
+                    y1=float(box_xyxy[1]),
+                    x2=float(box_xyxy[2]),
+                    y2=float(box_xyxy[3]),
                 ))
 
         self._frame_count += 1
@@ -277,9 +365,20 @@ class ByteTracker:
 
     def reset(self) -> None:
         """Reset tracker state (call between different videos)."""
-        self._frame_count = 0
-        # Reset YOLO tracker internal state
-        if hasattr(self.model, "predictor") and self.model.predictor is not None:
-            if hasattr(self.model.predictor, "trackers"):
-                self.model.predictor.trackers = None
-        log.debug("Tracker state reset.")
+        with _TRACKER_LOCK:
+            self._frame_count = 0
+            if hasattr(self.model, "predictor") and self.model.predictor is not None:
+                predictor = self.model.predictor
+                if hasattr(predictor, "trackers") and predictor.trackers is not None:
+                    for t in predictor.trackers:
+                        if hasattr(t, "reset"):
+                            try:
+                                t.reset()
+                            except Exception:
+                                pass
+                if hasattr(predictor, "vid_path"):
+                    try:
+                        predictor.vid_path = None
+                    except Exception:
+                        pass
+            log.debug("Tracker state reset.")

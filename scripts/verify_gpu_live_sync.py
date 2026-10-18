@@ -5,6 +5,9 @@ Comprehensive GPU acceleration and Live Count Synchronization Acceptance Test.
 Measures real performance on NVIDIA RTX 3050 and verifies video + telemetry sync.
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import json
 import sys
@@ -61,8 +64,9 @@ def main():
             )
 
     # 3. Execute Pipeline on cam_5
-    video_path = "D:/openhack/AIC21_Track1_Vehicle_Counting/Dataset_A/cam_5.mp4"
-    config_path = "configs/config.yaml"
+    aic_root = project_root.parent / "AIC21_Track1_Vehicle_Counting"
+    video_path = str(aic_root / "Dataset_A" / "cam_5.mp4")
+    config_path = str(project_root / "configs" / "config.yaml")
 
     t_start = time.perf_counter()
     pipeline = TrafficPipeline(config_path=config_path)
